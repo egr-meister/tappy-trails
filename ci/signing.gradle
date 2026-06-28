@@ -2,41 +2,42 @@
  * Gradle init script that injects the release signing config into the
  * generated Android app project WITHOUT editing the prebuilt build.gradle.
  *
+ * The signing config is added inside the AGP `finalizeDsl` hook, which is
+ * the correct (and only supported) point to programmatically add signing
+ * configs — doing it later (e.g. in projectsEvaluated) fails with
+ * "It is too late to add new signing configs".
+ *
  * Credentials are read from environment variables, which the GitHub Actions
  * workflow populates from repository secrets. Nothing sensitive is stored in
  * the repository.
  *
  * Use the SAME password for the keystore and the key (PKCS12 requirement).
  */
-gradle.projectsEvaluated {
-  rootProject.allprojects { project ->
-    if (project.plugins.hasPlugin('com.android.application')) {
-      def keystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
-      def keystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
-      def keyAlias = System.getenv('ANDROID_KEY_ALIAS')
-      def keyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+gradle.beforeProject { project ->
+  project.plugins.withId("com.android.application") {
+    def keystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+    if (keystorePath == null || keystorePath.trim().isEmpty()) {
+      println "signing.gradle: ANDROID_KEYSTORE_PATH not set; using default signing."
+      return
+    }
 
-      if (keystorePath == null || keystorePath.trim().isEmpty()) {
-        println "signing.gradle: ANDROID_KEYSTORE_PATH not set; using default signing."
-        return
-      }
+    def androidComponents = project.extensions.findByName("androidComponents")
+    if (androidComponents == null) {
+      println "signing.gradle: androidComponents extension not found; skipping."
+      return
+    }
 
-      project.android {
-        signingConfigs {
-          tappyTrailsRelease {
-            storeFile file(keystorePath)
-            storePassword keystorePassword
-            keyAlias keyAlias
-            keyPassword keyPassword
-            storeType "PKCS12"
-          }
-        }
-        buildTypes {
-          release {
-            signingConfig signingConfigs.tappyTrailsRelease
-          }
-        }
-      }
+    // finalizeDsl runs after the prebuilt build.gradle is evaluated but
+    // before AGP locks the DSL — the supported place to add signing configs.
+    androidComponents.finalizeDsl { android ->
+      def sc = android.signingConfigs.maybeCreate("tappyTrailsRelease")
+      sc.storeFile = project.file(keystorePath)
+      sc.storePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+      sc.keyAlias = System.getenv('ANDROID_KEY_ALIAS')
+      sc.keyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+      sc.storeType = "PKCS12"
+
+      android.buildTypes.getByName("release").signingConfig = sc
       println "signing.gradle: release signing config injected for ${project.name}."
     }
   }
