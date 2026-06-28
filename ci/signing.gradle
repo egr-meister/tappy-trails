@@ -1,0 +1,43 @@
+/**
+ * Gradle init script that injects the release signing config into the
+ * generated Android app project WITHOUT editing the prebuilt build.gradle.
+ *
+ * Credentials are read from environment variables, which the GitHub Actions
+ * workflow populates from repository secrets. Nothing sensitive is stored in
+ * the repository.
+ *
+ * Use the SAME password for the keystore and the key (PKCS12 requirement).
+ */
+gradle.projectsEvaluated {
+  rootProject.allprojects { project ->
+    if (project.plugins.hasPlugin('com.android.application')) {
+      def keystorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+      def keystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+      def keyAlias = System.getenv('ANDROID_KEY_ALIAS')
+      def keyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+
+      if (keystorePath == null || keystorePath.trim().isEmpty()) {
+        println "signing.gradle: ANDROID_KEYSTORE_PATH not set; using default signing."
+        return
+      }
+
+      project.android {
+        signingConfigs {
+          tappyTrailsRelease {
+            storeFile file(keystorePath)
+            storePassword keystorePassword
+            keyAlias keyAlias
+            keyPassword keyPassword
+            storeType "PKCS12"
+          }
+        }
+        buildTypes {
+          release {
+            signingConfig signingConfigs.tappyTrailsRelease
+          }
+        }
+      }
+      println "signing.gradle: release signing config injected for ${project.name}."
+    }
+  }
+}
